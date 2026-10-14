@@ -50,7 +50,7 @@ def fetch_agents():
     snapshot=cli('api','snapshot')['snapshot']
     spaces={w['workspace_id']:w['label'] for w in snapshot['workspaces']}
     panes={p['pane_id']:p for p in snapshot['panes']}
-    agents=[{**panes.get(a['pane_id'],{}),**a} for a in snapshot.get('agents',snapshot['panes']) if a.get('agent')]
+    agents=context_data.link_sessions([{**panes.get(a['pane_id'],{}),**a} for a in snapshot.get('agents',snapshot['panes']) if a.get('agent')])
     cache=context_data.load_cache()
     for a in agents:
         a['workspace_label']=(a.get('tokens') or {}).get('workspace_plain') or spaces.get(a['workspace_id'],a['workspace_id'])

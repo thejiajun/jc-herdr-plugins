@@ -166,6 +166,61 @@ class SessionCwdTests(unittest.TestCase):
         self.assertIsNone(context_data.session_cwd({'agent':'pi'}))
 
 
+class ClaudeConfigDirTests(unittest.TestCase):
+    """Sessions under a non-default CLAUDE_CONFIG_DIR (e.g. ~/.claude-personal) must still resolve."""
+    def setUp(self):
+        import tempfile,pathlib,os
+        self.tmp=tempfile.TemporaryDirectory(); self.home=pathlib.Path(self.tmp.name)
+        self.env=patch.dict('os.environ',{'HOME':str(self.home)}); self.env.start()
+        os.environ.pop('CLAUDE_CONFIG_DIR',None)
+        context_data._PATHS.clear()
+    def tearDown(self):
+        self.env.stop(); self.tmp.cleanup(); context_data._PATHS.clear()
+    def transcript(self,config,sid,text,mtime,cwd='/work/app'):
+        import os
+        folder=self.home/config/'projects'/context_data.project_slug(cwd); folder.mkdir(parents=True,exist_ok=True)
+        path=folder/f'{sid}.jsonl'
+        path.write_text(json.dumps({'cwd':cwd,'message':{'role':'user','content':text}})+'\n')
+        os.utime(path,(mtime,mtime))
+        return path
+    def test_bases_cover_every_config_dir(self):
+        import os
+        (self.home/'.claude/projects').mkdir(parents=True); (self.home/'.claude-personal/projects').mkdir(parents=True)
+        (self.home/'.claude-code-ui').mkdir()
+        custom=self.home/'elsewhere'; (custom/'projects').mkdir(parents=True)
+        os.environ['CLAUDE_CONFIG_DIR']=str(custom)
+        self.assertEqual({p.parent.name for p in context_data.claude_bases()},{'elsewhere','.claude','.claude-personal'})
+    def test_known_session_id_found_in_personal_dir(self):
+        path=self.transcript('.claude-personal','s1','你好',100)
+        self.assertEqual(context_data.session_path({'agent':'claude','cwd':'/work/app','agent_session':{'value':'s1'}}),path)
+    def test_missing_session_inferred_from_cwd(self):
+        self.transcript('.claude','work-old',"旧",100)
+        self.transcript('.claude-personal','claimed','别人的',300)
+        newest=self.transcript('.claude-personal','mine','最新请求',200)
+        agents=[{'agent':'claude','pane_id':'p1','cwd':'/work/app'},
+                {'agent':'claude','pane_id':'p2','cwd':'/work/app','agent_session':{'value':'claimed'}},
+                {'agent':'codex','pane_id':'p3','cwd':'/work/app'}]
+        context_data.link_sessions(agents)
+        self.assertEqual(agents[0]['agent_session']['value'],'mine')
+        self.assertNotIn('agent_session',agents[2])
+        self.assertEqual(context_data.session_path(agents[0]),newest)
+        s=context_data.signals(agents[0])
+        self.assertEqual(s['request'],'最新请求'); self.assertIn('按目录推断',s['source'])
+    def test_two_unlinked_panes_get_different_sessions(self):
+        self.transcript('.claude-personal','a',"一",100); self.transcript('.claude-personal','b',"二",200)
+        agents=[{'agent':'claude','pane_id':f'p{i}','cwd':'/work/app'} for i in (1,2)]
+        context_data.link_sessions(agents)
+        self.assertEqual(sorted(a['agent_session']['value'] for a in agents),['a','b'])
+
+class DetailLayoutTests(unittest.TestCase):
+    def test_request_and_reply_values_align(self):
+        lines=[t for t,_ in presentation.detail_lines({},{'request':'请求'*30,'reply':'回复'},{},'',40,'conversation')]
+        you=next(t for t in lines if t.startswith('你：')); bot=next(t for t in lines if t.startswith('Agent：'))
+        self.assertEqual(presentation.width(you[:you.index('请')]),7)
+        self.assertEqual(presentation.width(bot[:bot.index('回')]),7)
+        wrapped=lines[lines.index(you)+1]
+        self.assertTrue(wrapped.startswith(' '*7) and wrapped[7]!=' ')
+
 class JumpTests(unittest.TestCase):
     @patch('switcher.context_data.state_dir')
     @patch('switcher.cli')

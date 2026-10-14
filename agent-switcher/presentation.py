@@ -65,15 +65,18 @@ def detail_lines(agent,parsed,cached,terminal,n,view):
         return [(s,False) for line in terminal.splitlines() for s in wrap(line,n)]
     result=[]
     def heading(s): result.append((s,True))
-    def body(label,value,style=False):
-        result.extend((s,style) for s in wrap(label+value,n)); result.append(('',False))
+    def body(label,value,style=False,pad=0):
+        # Hanging indent: values (and their wrapped lines) start in one column after the label.
+        pad=max(pad,width(label))
+        result.extend(((cell(label,pad) if i==0 else ' '*pad)+s,style) for i,s in enumerate(wrap(value,max(1,n-pad))))
+        result.append(('',False))
     heading('最新对话')
     def excerpt(text):
         limit=max(70,min(240,n*3))
         return text if len(text)<=limit else text[:limit//3]+' … '+text[-(limit*2//3):]
     # Raw excerpts are secondary to the summary, so render them dimmed.
-    body('你：',excerpt(parsed.get('request') or '暂无可读请求'),'dim')
-    body('Agent：',excerpt(parsed.get('reply') or '这次请求尚无可读回复'),'dim')
+    body('你：',excerpt(parsed.get('request') or '暂无可读请求'),'dim',7)
+    body('Agent：',excerpt(parsed.get('reply') or '这次请求尚无可读回复'),'dim',7)
     heading('对话总结 · 后台生成')
     summary=cached.get('summary')
     if summary:

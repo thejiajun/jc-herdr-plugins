@@ -65,6 +65,7 @@ description = "Open agent switcher (previous)"
 
 - **项目目录**：Claude 会话每一行都记录了 `cwd`，Codex 每轮都会写 `turn_context.cwd`，插件取最新的一条。读不到时退回 Herdr 的 `foreground_cwd` / `cwd`。
 - **最新对话**：直接读取 Claude、Codex、Pi、OpenCode 的原生会话文件，提取最近一次用户请求和其后的助手回复，不读取推理过程和工具调用。
+  Claude 会话会在所有配置目录（`CLAUDE_CONFIG_DIR` 和 `~/.claude*`，如 `~/.claude-personal`）里查找。Herdr 没识别到某个 Claude Pane 的会话时，取该目录下最新且未被其他 Pane 占用的会话，来源标注「按目录推断」。
 - **对话总结**：Agent 状态变为已完成／空闲／待确认时，把该 Agent 最近 6 条有效消息交给 Autoname 当前配置的模型，压缩成请求、进度、待办。对话没有变化就不调用模型，同一 Agent 至少间隔 2 分钟。
 - **终端画面**：单独视图，显示 Pane 当前可见的原始内容。
 

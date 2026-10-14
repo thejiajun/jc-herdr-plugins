@@ -65,6 +65,7 @@ Status icons: ▶ working, ! needs input, ✓ done, ○ idle, ? unknown. Status 
 
 - **Folder**: Claude stamps `cwd` on every session row and Codex writes `turn_context.cwd` each turn; the plugin takes the latest one, falling back to Herdr's `foreground_cwd` / `cwd`.
 - **Latest exchange**: read directly from Claude, Codex, Pi, and OpenCode session files. Reasoning and tool calls are skipped.
+  Claude sessions are looked up in every config dir (`CLAUDE_CONFIG_DIR` and `~/.claude*`, e.g. `~/.claude-personal`). When Herdr reports no session for a Claude pane, the newest transcript in that folder not used by another pane is shown, marked “按目录推断”.
 - **Summary**: when an agent turns done, idle, or blocked, its last six useful messages go to Autoname's configured model. Unchanged conversations are never resent, and each agent is summarized at most once every two minutes.
 - **Terminal view**: the pane's raw visible screen.
 
