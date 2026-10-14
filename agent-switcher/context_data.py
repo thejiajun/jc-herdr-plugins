@@ -87,12 +87,46 @@ def parse_row(row,kind):
 _PATHS={}
 _CWDS={}
 
+def claude_bases():
+    """Every Claude projects dir: CLAUDE_CONFIG_DIR plus ~/.claude* (one per account, e.g. ~/.claude-personal)."""
+    found={}
+    for d in [os.environ.get('CLAUDE_CONFIG_DIR'),*sorted(glob.glob(str(Path.home()/'.claude*')))]:
+        if not d: continue
+        base=Path(d).expanduser()/'projects'
+        try:
+            if base.is_dir(): found.setdefault(base.resolve(),base)
+        except OSError: pass
+    return list(found.values())
+
+def project_slug(path):
+    # Claude stores sessions under the launch cwd with non-alphanumerics turned into '-'.
+    return re.sub(r'[^A-Za-z0-9]','-',path)
+
+def link_sessions(agents):
+    """Herdr leaves agent_session empty when it can't see a Claude session (e.g. a non-default
+    CLAUDE_CONFIG_DIR); fall back to the newest transcript under the pane's cwd not claimed by another pane."""
+    claimed={(a.get('agent_session') or {}).get('value') for a in agents}
+    for a in agents:
+        if a.get('agent')!='claude' or (a.get('agent_session') or {}).get('value'): continue
+        cwd=a.get('cwd') or a.get('foreground_cwd')
+        if not cwd: continue
+        files=[]
+        for base in claude_bases():
+            for path in (base/project_slug(cwd)).glob('*.jsonl'):
+                try:
+                    if path.stem not in claimed: files.append((path.stat().st_mtime,path))
+                except OSError: pass
+        if not files: continue
+        path=max(files)[1]
+        claimed.add(path.stem)
+        _PATHS[('claude',path.stem)]=path
+        a['agent_session']={'agent':'claude','kind':'id','source':'plugin:cwd','value':path.stem}
+    return agents
+
 def session_guesses(kind,sid,agent,base):
     pattern='*'+glob.escape(sid)+'*.jsonl'
     if kind=='claude':
-        # Claude stores sessions under the launch cwd with non-alphanumerics turned into '-'.
-        launch=agent.get('cwd') or ''
-        direct=base/re.sub(r'[^A-Za-z0-9]','-',launch)/f'{sid}.jsonl'
+        direct=base/project_slug(agent.get('cwd') or '')/f'{sid}.jsonl'
         return [direct] if direct.exists() else list(base.glob('*/'+pattern))
     try:
         # Codex UUIDv7 ids embed the creation time; rollouts live in sessions/YYYY/MM/DD.
@@ -112,9 +146,10 @@ def session_path(agent):
     if kind not in ('claude','codex'): return None
     key=(kind,sid)
     if key not in _PATHS or not _PATHS[key].exists():
-        base=Path.home()/('.claude/projects' if kind=='claude' else '.codex/sessions')
+        bases=claude_bases() if kind=='claude' else [Path.home()/'.codex/sessions']
         # Guess the location first; a full rglob over all sessions costs ~0.7s.
-        paths=[p for p in session_guesses(kind,sid,agent,base) if p.exists()] or list(base.rglob('*'+glob.escape(sid)+'*.jsonl'))
+        paths=([p for base in bases for p in session_guesses(kind,sid,agent,base) if p.exists()]
+               or [p for base in bases for p in base.rglob('*'+glob.escape(sid)+'*.jsonl')])
         if not paths: return None
         _PATHS[key]=max(paths,key=lambda p:p.stat().st_mtime)
     return _PATHS[key]
@@ -191,7 +226,7 @@ def messages(agent,tail=2_000_000):
         try: item=parse_row(json.loads(line),kind)
         except (ValueError,TypeError,AttributeError): continue
         if item: turns.append(item)
-    return turns[-20:],'原生对话 · '+kind
+    return turns[-20:],'原生对话 · '+kind+(' · 按目录推断' if session.get('source')=='plugin:cwd' else '')
 
 _SEARCH={}
 
@@ -253,7 +288,7 @@ def refresh(limit=8,pane_id=None):
     with (state_dir()/'refresh.lock').open('a') as lock:
         try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError: return {'busy':True}
-        cache=load_cache(); agents=herdr('agent','list')['agents']; pending=[]; now=time.time()
+        cache=load_cache(); agents=link_sessions(herdr('agent','list')['agents']); pending=[]; now=time.time()
         if pane_id: agents=[a for a in agents if a['pane_id']==pane_id]
         for agent in agents:
             key=identity(agent); parsed=signals(agent); old=cache.get(key,{})

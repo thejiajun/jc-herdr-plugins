@@ -9,10 +9,11 @@ A Herdr popup that lists every agent in a table. Search by name, real working fo
 - Table of status, the pane name shown in Herdr's sidebar, and the project folder.
 - The folder is where the agent **actually** works: it follows Claude and Codex when they move to another project instead of staying at the launch directory.
 - Type to search across names, folders, recent conversation text, and summaries.
+- One-key status filters (all / blocked / working / done / idle) with live counts in the header.
 - Two sort orders: grouped by folder, or by most recent activity.
 - Details show the latest request and reply, plus a request / progress / next-step summary written by Autoname's model.
 - Summaries refresh whenever an agent finishes a turn. No background service to install.
-- On macOS the popup switches to an ASCII keyboard while open and restores your input method afterwards, so J/K work under Chinese or Japanese IMEs.
+- On macOS the popup switches to an ASCII keyboard while open and restores your input method afterwards, so J/K and the filter keys work under Chinese or Japanese IMEs. Full-width letters (ａ, ｊ) and non-Latin layouts that report the US base key still map to the same keys.
 
 ## Requirements
 
@@ -51,8 +52,9 @@ Then run `herdr server reload-config`. The **Search agents** action in the plugi
 | ⌃⌥J / ⌃⌥K | Open the popup with the next / previous agent selected |
 | J / K or ↑ / ↓ | Move the selection |
 | Enter | Jump to the selected agent |
-| Any other key | Start searching (press `/` first for a query starting with j or k) |
-| Esc | Clear the search, or close when there is none |
+| A / B / W / D / I | Filter by status: all, blocked (needs input), working, done, idle. Press the active one again to show all. Combines with the search |
+| `/` or any other key | Start searching (press `/` first for a query starting with j, k, a, b, w, d or i) |
+| Esc | Clear the search, then the status filter, then close |
 | ← / → | Switch between folder and recent sort (remembered) |
 | Tab | Toggle conversation / terminal view |
 | PgUp / PgDn | Scroll the details |
@@ -63,6 +65,7 @@ Status icons: ▶ working, ! needs input, ✓ done, ○ idle, ? unknown. Status 
 
 - **Folder**: Claude stamps `cwd` on every session row and Codex writes `turn_context.cwd` each turn; the plugin takes the latest one, falling back to Herdr's `foreground_cwd` / `cwd`.
 - **Latest exchange**: read directly from Claude, Codex, Pi, and OpenCode session files. Reasoning and tool calls are skipped.
+  Claude sessions are looked up in every config dir (`CLAUDE_CONFIG_DIR` and `~/.claude*`, e.g. `~/.claude-personal`). When Herdr reports no session for a Claude pane, the newest transcript in that folder not used by another pane is shown, marked “按目录推断”.
 - **Summary**: when an agent turns done, idle, or blocked, its last six useful messages go to Autoname's configured model. Unchanged conversations are never resent, and each agent is summarized at most once every two minutes.
 - **Terminal view**: the pane's raw visible screen.
 

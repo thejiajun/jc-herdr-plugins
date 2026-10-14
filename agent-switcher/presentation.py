@@ -4,6 +4,8 @@ import time
 import os
 import unicodedata
 
+# Status filter chips: key, short label, status (None = all).
+FILTERS=(('a','全部',None),('b','等待','blocked'),('w','运行','working'),('d','完成','done'),('i','空闲','idle'))
 STATUS={'working':('▶','运行中',2),'blocked':('!','待确认',3),'done':('✓','已完成',4),'idle':('○','空闲',5),'unknown':('?','未知',5)}
 
 VS16='\ufe0f'
@@ -63,15 +65,18 @@ def detail_lines(agent,parsed,cached,terminal,n,view):
         return [(s,False) for line in terminal.splitlines() for s in wrap(line,n)]
     result=[]
     def heading(s): result.append((s,True))
-    def body(label,value,style=False):
-        result.extend((s,style) for s in wrap(label+value,n)); result.append(('',False))
+    def body(label,value,style=False,pad=0):
+        # Hanging indent: values (and their wrapped lines) start in one column after the label.
+        pad=max(pad,width(label))
+        result.extend(((cell(label,pad) if i==0 else ' '*pad)+s,style) for i,s in enumerate(wrap(value,max(1,n-pad))))
+        result.append(('',False))
     heading('最新对话')
     def excerpt(text):
         limit=max(70,min(240,n*3))
         return text if len(text)<=limit else text[:limit//3]+' … '+text[-(limit*2//3):]
     # Raw excerpts are secondary to the summary, so render them dimmed.
-    body('你：',excerpt(parsed.get('request') or '暂无可读请求'),'dim')
-    body('Agent：',excerpt(parsed.get('reply') or '这次请求尚无可读回复'),'dim')
+    body('你：',excerpt(parsed.get('request') or '暂无可读请求'),'dim',7)
+    body('Agent：',excerpt(parsed.get('reply') or '这次请求尚无可读回复'),'dim',7)
     heading('对话总结 · 后台生成')
     summary=cached.get('summary')
     if summary:
@@ -82,7 +87,7 @@ def detail_lines(agent,parsed,cached,terminal,n,view):
         body('',cached.get('error') or '等待后台生成；可先看上方最新对话')
     return result
 
-def draw(win,rows,index,total,query,agent,parsed,cached,terminal,scroll,error,searching,view,sort='folder'):
+def draw(win,rows,index,total,query,agent,parsed,cached,terminal,scroll,error,searching,view,sort='folder',status=None,counts=None):
     h,w=win.getmaxyx(); win.erase()
     title='AGENTS  /  '+str(len(rows))+' 个匹配'
     put(win,0,1,title,w-2,curses.A_BOLD|curses.color_pair(1))
@@ -95,6 +100,16 @@ def draw(win,rows,index,total,query,agent,parsed,cached,terminal,scroll,error,se
     put(win,0,x,'←→ 切换',w-x-1,curses.A_DIM)
     prompt=(query+'▏') if searching else (query or '直接输入搜索：名称、目录、对话内容')
     put(win,1,1,'搜索  '+prompt,w-2,curses.A_BOLD if searching or query else curses.A_DIM)
+    # Segmented status filter: key letter + label + count; active one bracketed like the sort switch.
+    # Narrow popups drop the key letters, then the prefix, before clipping.
+    for keys,prefix in ((True,'筛选 '),(False,'筛选 '),(False,'')):
+        chips=[(('['+t+']' if state==status else ' '+t+' '),state==status) for key,label,state in FILTERS
+               for t in [(key+' ' if keys else '')+label+' '+str((counts or {}).get(state,0))]]
+        if width(prefix)+sum(width(t)+1 for t,_ in chips)<=w-2: break
+    x=1
+    put(win,2,x,prefix,w-x-1,curses.A_DIM); x+=width(prefix)
+    for text,active in chips:
+        put(win,2,x,text,w-x-1,curses.A_BOLD|curses.color_pair(1) if active else curses.A_DIM); x+=width(text)+1
     if h<16 or w<32:
         put(win,3,1,'请放大至 32 列 × 16 行 · Esc 关闭',w-2); return 0
     split=w>=135
@@ -119,7 +134,7 @@ def draw(win,rows,index,total,query,agent,parsed,cached,terminal,scroll,error,se
         folder=os.path.basename(a.get('project_dir','').rstrip('/')) or '—'
         put(win,y,1,row('› ' if selected else '  ',state_label,label,folder),table_width,attr)
         if not selected: put(win,y,3,state_label,status_width,curses.color_pair(state[2]))
-    if not rows: put(win,5,3,'没有匹配结果',table_width-2)
+    if not rows: put(win,5,3,'没有匹配结果' if not status else '该状态下没有匹配 · a 显示全部',table_width-2)
     if split:
         x,top,pw=table_width+3,3,w-table_width-5
         for y in range(3,h-3): put(win,y,table_width+1,'│',1,curses.A_DIM)
@@ -149,7 +164,7 @@ def draw(win,rows,index,total,query,agent,parsed,cached,terminal,scroll,error,se
             put(win,body_top+i,x,line,pw,attr)
         if len(lines)>capacity: put(win,h-3,x,f'{scroll+1}–{min(scroll+capacity,len(lines))}/{len(lines)} · PgUp/PgDn',pw,curses.A_DIM)
     else: scroll=0
-    hint='输入搜索 · Enter 跳转 · Esc 清空' if searching else 'Enter 跳转 · 输入即搜索 · Tab 终端/对话'
+    hint='输入搜索 · Enter 跳转 · Esc 清空' if searching else 'Enter 跳转 · / 搜索（其他字母直接搜） · Tab 终端/对话'
     put(win,h-2,1,error or hint,w-2,curses.A_BOLD)
-    put(win,h-1,1,('↑↓ 选择 · Ctrl+U 清空' if searching else 'J/K ↑↓ 选择 · j/k 开头先按 / · Esc 关闭'),w-2,curses.A_DIM)
+    put(win,h-1,1,('↑↓ 选择 · Ctrl+U 清空' if searching else 'J/K ↑↓ 选择 · a/b/w/d/i 筛选 · Esc '+('清除筛选' if status else '关闭')),w-2,curses.A_DIM)
     return scroll
