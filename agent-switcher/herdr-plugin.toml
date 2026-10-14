@@ -1,6 +1,6 @@
 id = "thejiajun.agent-switcher"
 name = "Agent Switcher"
-version = "0.4.0"
+version = "0.5.0"
 min_herdr_version = "0.9.0"
 description = "Search agents, preview terminal output and jump to their panes."
 platforms = ["macos", "linux"]

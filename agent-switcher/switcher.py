@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import time
+import unicodedata
 import context_data
 import presentation
 import input_source
@@ -27,6 +28,8 @@ def cli(*args, raw=False):
     return data.get('result', data)
 
 SORTS=('folder','recent')
+# Navigation-mode letters that filter by status; None means all.
+FILTERS={'a':None,'b':'blocked','w':'working','d':'done','i':'idle'}
 
 def order_agents(agents,mode):
     # Most recent conversation first; folder mode then groups by working dir (stable sort keeps recency inside).
@@ -59,17 +62,18 @@ def fetch_agents():
         a['_search']=context_data.search_text(a)+' '+json.dumps(a['_summary'],ensure_ascii=False)
     return agents
 
-def filtered(agents, query):
+def filtered(agents, query, status=None):
     words = query.casefold().split()
-    return [a for a in agents if all(word in (' '.join(str(a.get(k,'')) for k in
+    return [a for a in agents if (not status or a.get('agent_status')==status) and all(word in (' '.join(str(a.get(k,'')) for k in
         ('display_name','project_dir','terminal_title_stripped','workspace_label','agent','name','cwd','pane_id','agent_status','_search'))+' '+STATUS.get(a.get('agent_status'),'未知')).casefold() for word in words)]
 
 def decode(sequence):
     if sequence=='\x1b\n': return 'next'
     if sequence=='\x1b\x0b': return 'previous'
-    match=re.fullmatch(r'\x1b\[(\d+)(?::[\d:]*)?(?:;(\d+)(?::([123]))?)?u',sequence)
+    # Kitty: code[:shifted[:base]][;mods[:event]]u; base is the US-layout key, so non-Latin layouts still map.
+    match=re.fullmatch(r'\x1b\[(\d+)(?::(\d*)(?::(\d+))?)?(?:;(\d+)(?::([123]))?)?u',sequence)
     if match:
-        code,mods,kind=int(match[1]),int(match[2] or 1)-1,int(match[3] or 1)
+        code,mods,kind=int(match[3] or match[1]),int(match[4] or 1)-1,int(match[5] or 1)
         if kind==3: return None
         if code in (106,107) and mods & 6==6: return 'next' if code==106 else 'previous'
         if code==27: return 'cancel'
@@ -125,6 +129,12 @@ def keypress(win):
         win.timeout(80)
     return decode(sequence)
 
+def normalize(key):
+    # IMEs may still deliver full-width letters (ａ／ｊ); NFKC folds them to ASCII.
+    if not isinstance(key,str) or len(key)!=1: return key
+    folded=unicodedata.normalize('NFKC',key)
+    return folded if len(folded)==1 else key
+
 def ui(win):
     curses.curs_set(0)
     curses.start_color()
@@ -141,6 +151,7 @@ def ui(win):
     # Navigation mode by default (j/k move); '/' enters search mode where letters type.
     searching=False
     sort=load_sort()
+    status=None
     parsed={}
     agents, query, selected = [], '', None
     preview, preview_id, scroll, error = '', None, 0, ''
@@ -158,7 +169,9 @@ def ui(win):
                 listing, list_due = None, now+3
             if not listing and now>=list_due:
                 listing = pool.submit(fetch_agents)
-            rows = filtered(order_agents(agents,sort),query)
+            matched = filtered(order_agents(agents,sort),query)
+            rows = filtered(matched,'',status)
+            counts = {s:sum(a.get('agent_status')==s for a in matched) if s else len(matched) for s in FILTERS.values()}
             ids = [a['pane_id'] for a in rows]
             if selected not in ids:
                 selected = next((a['pane_id'] for a in rows if a.get('focused')),ids[0] if ids else None)
@@ -185,11 +198,16 @@ def ui(win):
             h,w=win.getmaxyx()
             cached=(agent or {}).get('_cached',{})
             shown_parsed=parsed or cached.get('parsed',{})
-            scroll=presentation.draw(win,rows,index,len(agents),query,agent,shown_parsed,cached,preview,scroll,error,searching,view,sort)
+            scroll=presentation.draw(win,rows,index,len(agents),query,agent,shown_parsed,cached,preview,scroll,error,searching,view,sort,status,counts)
             win.refresh()
             key = keypress(win)
+            if not searching: key = normalize(key)
+            # Esc peels back one layer at a time: search, then status filter, then close.
             if key=='cancel' and (searching or query):
                 searching, query = False, ''
+                continue
+            if key=='cancel' and status:
+                status = None
                 continue
             if key in ('cancel','\x03'):
                 return None
@@ -204,7 +222,9 @@ def ui(win):
                 scroll=0
             elif not searching and key=='/':
                 searching=True
-            # Outside search, j/k navigate; any other printable key starts a search.
+            # Outside search, j/k navigate and a/b/w/d/i filter; any other printable key starts a search.
+            elif not searching and key in FILTERS:
+                status = None if FILTERS[key]==status else FILTERS[key]
             elif (key in ('next',curses.KEY_DOWN,'\x0e') or not searching and key=='j') and ids:
                 selected = ids[(index+1)%len(ids)]
             elif (key in ('previous',curses.KEY_UP,'\x10') or not searching and key=='k') and ids:
@@ -246,8 +266,8 @@ def terminfo_without_rep():
         pass
 
 def run_ui(win):
-    # Disambiguate escape codes only; key-release events are not needed.
-    sys.stdout.write('\x1b[>1u'); sys.stdout.flush()
+    # Disambiguate escape codes and report alternate (base-layout) keys; key-release events are not needed.
+    sys.stdout.write('\x1b[>5u'); sys.stdout.flush()
     try: return ui(win)
     finally:
         sys.stdout.write('\x1b[<u'); sys.stdout.flush()
